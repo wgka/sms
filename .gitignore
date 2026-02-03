@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# macOS
+.DS_Store
+
+# Environment & Secrets
+.env
+*.local
+smstome_account.json
+
+# Playwright
+.playwright-mcp/
+
+# Yarn (PnP)
+frontend/.pnp.cjs
+frontend/.pnp.loader.mjs
+frontend/.yarn/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
