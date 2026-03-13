@@ -2,25 +2,42 @@
   <div class="app">
     <header class="header">
       <h1>📱 SMS Viewer</h1>
-      <p>SMSToMe.com 手机号短信查询</p>
+      <p>多数据源手机号短信查询</p>
       <div class="connection-status" :class="{ connected: isConnected, disconnected: !isConnected }">
         {{ isConnected ? '✅ 已连接' : '❌ 未连接' }}
       </div>
     </header>
 
     <main class="main">
+      <!-- 数据源选择 -->
+      <div class="provider-section">
+        <div class="provider-tabs">
+          <button
+            v-for="provider in providers"
+            :key="provider.id"
+            :class="['provider-tab', { active: selectedProvider === provider.id }]"
+            @click="switchProvider(provider.id)"
+          >
+            <span class="provider-icon">{{ provider.icon }}</span>
+            <span class="provider-name">{{ provider.name }}</span>
+            <span v-if="provider.requires_login" class="provider-badge">需登录</span>
+            <span v-else class="provider-badge free">免费</span>
+          </button>
+        </div>
+      </div>
+
       <!-- 搜索区域 -->
       <div class="search-section">
         <div class="search-box">
           <select v-model="selectedCountry" class="country-select">
-            <option v-for="(slug, code) in countries" :key="code" :value="slug">
-              {{ countryNames[code] || code }}
+            <option v-for="country in currentCountries" :key="country.code || country" :value="country.code || country">
+              {{ getCountryDisplay(country) }}
             </option>
           </select>
           <input
             v-model="searchPhone"
             type="text"
-            placeholder="输入手机号搜索 (如: 447447283220)"
+            :placeholder="getSearchPlaceholder()"
             class="search-input"
             @keyup.enter="searchPhoneSMS"
           />
@@ -51,6 +68,7 @@
           📖 API 文档
         </button>
         <button
+          v-if="selectedProvider === 'smstome'"
           :class="['tab', { active: activeTab === 'settings' }]"
           @click="activeTab = 'settings'; loadCookies()"
         >
@@ -90,7 +108,9 @@
               {{ phone.phone }}
             </div>
             <div class="phone-info">
-              <span class="time">⏰ {{ phone.added_time }}</span>
+              <span v-if="phone.country" class="country">🌍 {{ phone.country }}</span>
+              <span v-if="phone.sms_count" class="sms-count">📨 {{ phone.sms_count }} 条</span>
+              <span class="time">⏰ {{ phone.added_time || phone.last_update }}</span>
             </div>
           </div>
         </div>
@@ -105,7 +125,7 @@
           <div v-if="currentPhoneDetail" class="phone-meta">
             <span>📞 {{ currentPhoneDetail.phone }}</span>
             <span>📍 {{ currentPhoneDetail.country }}</span>
-            <span>⏰ {{ currentPhoneDetail.added_time }}</span>
+            <span v-if="currentPhoneDetail.added_time">⏰ {{ currentPhoneDetail.added_time }}</span>
           </div>
         </div>
 
@@ -115,9 +135,9 @@
           <div v-for="(msg, index) in currentPhoneDetail.messages" :key="index" class="sms-card">
             <div class="sms-header">
               <span class="sender">📨 {{ msg.sender }}</span>
-              <span class="time">{{ msg.received_time }}</span>
+              <span class="time">{{ msg.received_time || msg.time }}</span>
             </div>
-            <div class="sms-content">{{ msg.message }}</div>
+            <div class="sms-content">{{ msg.message || msg.content }}</div>
           </div>
         </div>
 
@@ -134,149 +154,137 @@
         </div>
 
         <div class="api-docs">
-          <!-- 获取手机号 -->
+          <!-- Receive-SMS.cc API -->
           <div class="api-section">
-            <h3>📱 获取手机号列表</h3>
+            <h3>🆓 Receive-SMS.cc API (免费)</h3>
             
             <div class="api-item">
               <div class="api-method get">GET</div>
-              <code class="api-url">/api/phones/{country}</code>
+              <code class="api-url">/api/receivesmscc/countries</code>
+              <p class="api-desc">获取支持的国家列表</p>
+            </div>
+
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/receivesmscc/phones?country=US</code>
+              <p class="api-desc">获取指定国家的手机号列表</p>
+              <div class="api-params">
+                <h4>参数:</h4>
+                <ul>
+                  <li><code>country</code> - 国家代码: US, UK, Netherlands, Finland, Belgium 等</li>
+                  <li><code>page</code> - 页码 (默认 1)</li>
+                  <li><code>all</code> - 获取首页所有号码 (true/false)</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/receivesmscc/sms/{phone}?country=US</code>
+              <p class="api-desc">获取指定手机号的短信</p>
+              <div class="api-params">
+                <h4>参数:</h4>
+                <ul>
+                  <li><code>phone</code> - 手机号 (不含+)</li>
+                  <li><code>country</code> - 国家代码 (默认 US)</li>
+                  <li><code>pages</code> - 获取页数 (默认 1)</li>
+                  <li><code>limit</code> - 返回条数限制 (默认 0，全部)</li>
+                </ul>
+              </div>
+              <div class="api-examples">
+                <h4>示例:</h4>
+                <pre>GET /api/receivesmscc/sms/18594154972?country=US
+GET /api/receivesmscc/sms/447886032861?country=UK&limit=5</pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- GetSMS.cc API -->
+          <div class="api-section">
+            <h3>📱 GetSMS.cc API (免费)</h3>
+            
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/getsmscc/phones/{country}</code>
+              <p class="api-desc">获取指定国家的手机号列表</p>
+              <div class="api-params">
+                <h4>参数:</h4>
+                <ul>
+                  <li><code>country</code> - 国家代码: US, UK, France, Sweden, Finland, Netherlands</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/getsmscc/sms/{phone}</code>
+              <p class="api-desc">获取指定手机号的短信</p>
+              <div class="api-params">
+                <h4>参数:</h4>
+                <ul>
+                  <li><code>phone</code> - 手机号 (不含+)</li>
+                  <li><code>pages</code> - 获取页数 (默认 1)</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <!-- SMS24.me API -->
+          <div class="api-section">
+            <h3>🌐 SMS24.me API (免费)</h3>
+            
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/sms24me/countries</code>
+              <p class="api-desc">获取支持的国家列表 (45+国家)</p>
+            </div>
+
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/sms24me/phones/{country}</code>
+              <p class="api-desc">获取指定国家的手机号列表</p>
+              <div class="api-params">
+                <h4>参数:</h4>
+                <ul>
+                  <li><code>country</code> - 国家代码 (ISO): us, gb, de, fr, ru, ua, ca 等</li>
+                  <li><code>page</code> - 页码 (默认 1)</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/sms24me/sms/{phone}?country=us</code>
+              <p class="api-desc">获取指定手机号的短信</p>
+            </div>
+          </div>
+
+          <!-- SMSToMe API -->
+          <div class="api-section">
+            <h3>🔐 SMSToMe.com API (需登录)</h3>
+            
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/smstome/phones/{country}</code>
               <p class="api-desc">获取指定国家的手机号列表</p>
               <div class="api-params">
                 <h4>参数:</h4>
                 <ul>
                   <li><code>country</code> - 国家代码: uk, poland, netherlands, sweden, finland, belgium, slovenia</li>
                   <li><code>page</code> - 页码 (默认 1)</li>
-                  <li><code>pages</code> - 多页获取，如 <code>1,2,3</code> 或 <code>1-5</code></li>
-                  <li><code>all</code> - 获取所有页 (true/false)</li>
                 </ul>
               </div>
-              <div class="api-examples">
-                <h4>示例:</h4>
-                <pre>GET /api/phones/uk              # 第一页
-GET /api/phones/uk?page=2       # 第二页
-GET /api/phones/uk?pages=1-3    # 1-3页
-GET /api/phones/uk?all=true     # 所有页</pre>
-              </div>
             </div>
 
             <div class="api-item">
               <div class="api-method get">GET</div>
-              <div class="api-method post">POST</div>
-              <code class="api-url">/api/phones</code>
-              <p class="api-desc">批量获取多国家多页手机号</p>
-              <div class="api-examples">
-                <h4>GET 示例:</h4>
-                <pre>GET /api/phones?country=uk,poland&pages=1-3</pre>
-                <h4>POST 示例:</h4>
-                <pre>{
-  "countries": ["uk", "poland"],
-  "pages": [1, 2, 3]
-}</pre>
-              </div>
-            </div>
-          </div>
-
-          <!-- 获取短信 -->
-          <div class="api-section">
-            <h3>📨 获取短信</h3>
-            
-            <div class="api-item">
-              <div class="api-method get">GET</div>
-              <code class="api-url">/api/sms/{phone}</code>
-              <p class="api-desc">简化接口 - 获取手机号短信</p>
-              <div class="api-params">
-                <h4>参数:</h4>
-                <ul>
-                  <li><code>phone</code> - 手机号 (不含+)</li>
-                  <li><code>country</code> - 国家代码 (默认 uk)</li>
-                  <li><code>limit</code> - 返回条数 (默认 1，0=全部)</li>
-                </ul>
-              </div>
-              <div class="api-examples">
-                <h4>示例:</h4>
-                <pre>GET /api/sms/447454414630           # 最新1条
-GET /api/sms/447454414630?limit=5   # 最新5条
-GET /api/sms/447454414630?limit=0   # 全部</pre>
-              </div>
-            </div>
-
-            <div class="api-item">
-              <div class="api-method get">GET</div>
-              <code class="api-url">/api/phone/{phone}/sms</code>
-              <p class="api-desc">详细接口 - 获取手机号短信</p>
-              <div class="api-params">
-                <h4>参数:</h4>
-                <ul>
-                  <li><code>country</code> - 国家代码 (默认 uk)</li>
-                  <li><code>pages</code> - 短信页数 (默认 1)</li>
-                  <li><code>limit</code> - 返回条数限制</li>
-                  <li><code>latest</code> - 只返回最新一条 (true/false)</li>
-                </ul>
-              </div>
-              <div class="api-examples">
-                <h4>示例:</h4>
-                <pre>GET /api/phone/447454414630/sms?latest=true
-GET /api/phone/447454414630/sms?limit=10
-GET /api/phone/447454414630/sms?pages=3</pre>
-              </div>
-            </div>
-          </div>
-
-          <!-- 搜索和缓存 -->
-          <div class="api-section">
-            <h3>🔍 搜索和缓存</h3>
-            
-            <div class="api-item">
-              <div class="api-method get">GET</div>
-              <code class="api-url">/api/search/{country}/{phone}</code>
-              <p class="api-desc">搜索手机号，返回详情页 URL</p>
-            </div>
-
-            <div class="api-item">
-              <div class="api-method get">GET</div>
-              <code class="api-url">/api/cache</code>
-              <p class="api-desc">获取 URL 缓存列表</p>
-            </div>
-
-            <div class="api-item">
-              <div class="api-method delete">DELETE</div>
-              <code class="api-url">/api/cache/{phone}</code>
-              <p class="api-desc">删除指定手机号的缓存</p>
-            </div>
-          </div>
-
-          <!-- 系统接口 -->
-          <div class="api-section">
-            <h3>⚙️ 系统接口</h3>
-            
-            <div class="api-item">
-              <div class="api-method get">GET</div>
-              <code class="api-url">/api/health</code>
-              <p class="api-desc">健康检查</p>
-            </div>
-
-            <div class="api-item">
-              <div class="api-method get">GET</div>
-              <code class="api-url">/api/countries</code>
-              <p class="api-desc">获取支持的国家列表</p>
-            </div>
-
-            <div class="api-item">
-              <div class="api-method get">GET</div>
-              <code class="api-url">/api/cookies</code>
-              <p class="api-desc">查看当前 Cookies</p>
+              <code class="api-url">/api/smstome/sms/{phone}?country=uk</code>
+              <p class="api-desc">获取指定手机号的短信</p>
             </div>
 
             <div class="api-item">
               <div class="api-method post">POST</div>
-              <code class="api-url">/api/cookies</code>
-              <p class="api-desc">设置 Cookies</p>
-            </div>
-
-            <div class="api-item">
-              <div class="api-method post">POST</div>
-              <code class="api-url">/api/login</code>
+              <code class="api-url">/api/smstome/login</code>
               <p class="api-desc">登录并刷新 Cookies</p>
               <div class="api-examples">
                 <h4>请求体:</h4>
@@ -287,13 +295,30 @@ GET /api/phone/447454414630/sms?pages=3</pre>
               </div>
             </div>
           </div>
+
+          <!-- 通用 API -->
+          <div class="api-section">
+            <h3>⚙️ 通用接口</h3>
+            
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/providers</code>
+              <p class="api-desc">获取支持的数据源列表</p>
+            </div>
+
+            <div class="api-item">
+              <div class="api-method get">GET</div>
+              <code class="api-url">/api/health?provider=receivesmscc</code>
+              <p class="api-desc">健康检查</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      <!-- 设置 -->
-      <div v-if="activeTab === 'settings'" class="panel">
+      <!-- 设置 (仅 SMSToMe) -->
+      <div v-if="activeTab === 'settings' && selectedProvider === 'smstome'" class="panel">
         <div class="panel-header">
-          <h2>⚙️ 设置</h2>
+          <h2>⚙️ SMSToMe 设置</h2>
           <button @click="testCookies" :disabled="loading" class="btn btn-sm btn-primary">
             🔗 测试连接
           </button>
@@ -314,7 +339,7 @@ GET /api/phone/447454414630/sms?pages=3</pre>
           <!-- 账号登录区域 -->
           <div class="settings-section">
             <h3>🔑 账号登录 (推荐)</h3>
-            <p class="section-desc">使用账号密码自动登录获取 Cookies，Cookies 失效时会自动刷新</p>
+            <p class="section-desc">使用账号密码自动登录获取 Cookies</p>
             
             <div class="login-form">
               <div class="form-row">
@@ -349,53 +374,6 @@ GET /api/phone/447454414630/sms?pages=3</pre>
             </div>
           </div>
 
-          <!-- 分割线 -->
-          <div class="divider">
-            <span>或者手动设置</span>
-          </div>
-
-          <!-- 手动 Cookie 设置 -->
-          <div class="settings-section">
-            <h3>📋 手动设置 Cookies</h3>
-            <div class="settings-info">
-              <p>如果自动登录失败，可以手动复制 Cookies：</p>
-              <ol>
-                <li>在浏览器中打开 <a href="https://smstome.com" target="_blank">smstome.com</a> 并登录</li>
-                <li>按 F12 打开开发者工具</li>
-                <li>切换到 "Application" → Cookies → smstome.com</li>
-                <li>复制 <code>smstome_session</code> 的值</li>
-              </ol>
-            </div>
-
-            <div class="cookie-form">
-              <div class="form-group">
-                <label>smstome_session</label>
-                <textarea
-                  v-model="cookieForm.smstome_session"
-                  placeholder="粘贴 smstome_session 的值"
-                  class="form-input form-textarea"
-                  rows="2"
-                ></textarea>
-              </div>
-
-              <div class="form-group">
-                <label>或者粘贴完整 Cookie 字符串</label>
-                <textarea
-                  v-model="cookieForm.cookie_string"
-                  placeholder="格式: smstome_session=xxx; XSRF-TOKEN=xxx"
-                  class="form-input form-textarea"
-                  rows="2"
-                ></textarea>
-              </div>
-
-              <div class="form-actions">
-                <button @click="saveCookies" :disabled="saving" class="btn btn-secondary">
-                  {{ saving ? '保存中...' : '💾 保存 Cookies' }}
-                </button>
-              </div>
-            </div>
-          </div>
-
           <!-- 当前 Cookies 状态 -->
           <div v-if="currentCookies" class="current-cookies">
             <h3>📊 当前 Cookies</h3>
@@ -418,7 +396,7 @@ GET /api/phone/447454414630/sms?pages=3</pre>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import axios from 'axios'
 
 const API_BASE = 'http://localhost:5001/api'
@@ -431,8 +409,86 @@ const message = ref(null)
 const activeTab = ref('list')
 const isConnected = ref(false)
 
-// 国家 (网站实际支持的列表)
-const countries = ref({
+// 数据源
+const providers = ref([
+  {
+    id: 'receivesmscc',
+    name: 'Receive-SMS.cc',
+    description: '免费短信接收服务',
+    requires_login: false,
+    icon: '🆓'
+  },
+  {
+    id: 'getsmscc',
+    name: 'GetSMS.cc',
+    description: '免费短信接收服务',
+    requires_login: false,
+    icon: '📱'
+  },
+  {
+    id: 'sms24me',
+    name: 'SMS24.me',
+    description: '45+国家短信服务',
+    requires_login: false,
+    icon: '🌐'
+  },
+  {
+    id: 'smstome',
+    name: 'SMSToMe.com',
+    description: '需要登录的服务',
+    requires_login: true,
+    icon: '🔐'
+  }
+])
+const selectedProvider = ref('receivesmscc')
+
+// Receive-SMS.cc 国家列表
+const receivesmsccCountries = ref([
+  { code: 'US', name: 'United States', flag: '🇺🇸' },
+  { code: 'UK', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: 'Canada', name: 'Canada', flag: '🇨🇦' },
+  { code: 'Netherlands', name: 'Netherlands', flag: '🇳🇱' },
+  { code: 'Finland', name: 'Finland', flag: '🇫🇮' },
+  { code: 'Belgium', name: 'Belgium', flag: '🇧🇪' },
+  { code: 'France', name: 'France', flag: '🇫🇷' },
+  { code: 'Germany', name: 'Germany', flag: '🇩🇪' },
+  { code: 'Sweden', name: 'Sweden', flag: '🇸🇪' },
+  { code: 'Russia', name: 'Russia', flag: '🇷🇺' },
+])
+
+// GetSMS.cc 国家列表
+const getsmsccCountries = ref([
+  { code: 'US', name: 'United States', flag: '🇺🇸' },
+  { code: 'UK', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: 'France', name: 'France', flag: '🇫🇷' },
+  { code: 'Sweden', name: 'Sweden', flag: '🇸🇪' },
+  { code: 'Finland', name: 'Finland', flag: '🇫🇮' },
+  { code: 'Netherlands', name: 'Netherlands', flag: '🇳🇱' },
+  { code: 'Germany', name: 'Germany', flag: '🇩🇪' },
+  { code: 'Belgium', name: 'Belgium', flag: '🇧🇪' },
+])
+
+// SMS24.me 国家列表
+const sms24meCountries = ref([
+  { code: 'us', name: 'United States', flag: '🇺🇸' },
+  { code: 'gb', name: 'United Kingdom', flag: '🇬🇧' },
+  { code: 'de', name: 'Germany', flag: '🇩🇪' },
+  { code: 'fr', name: 'France', flag: '🇫🇷' },
+  { code: 'ru', name: 'Russia', flag: '🇷🇺' },
+  { code: 'ua', name: 'Ukraine', flag: '🇺🇦' },
+  { code: 'ca', name: 'Canada', flag: '🇨🇦' },
+  { code: 'nl', name: 'Netherlands', flag: '🇳🇱' },
+  { code: 'pl', name: 'Poland', flag: '🇵🇱' },
+  { code: 'se', name: 'Sweden', flag: '🇸🇪' },
+  { code: 'fi', name: 'Finland', flag: '🇫🇮' },
+  { code: 'es', name: 'Spain', flag: '🇪🇸' },
+  { code: 'it', name: 'Italy', flag: '🇮🇹' },
+  { code: 'in', name: 'India', flag: '🇮🇳' },
+  { code: 'br', name: 'Brazil', flag: '🇧🇷' },
+])
+
+// SMSToMe 国家列表
+const smstomeCountries = ref({
   uk: 'united-kingdom',
   poland: 'poland',
   netherlands: 'netherlands',
@@ -442,7 +498,7 @@ const countries = ref({
   slovenia: 'slovenia'
 })
 
-const countryNames = {
+const smstomeCountryNames = {
   uk: '🇬🇧 英国',
   poland: '🇵🇱 波兰',
   netherlands: '🇳🇱 荷兰',
@@ -452,7 +508,26 @@ const countryNames = {
   slovenia: '🇸🇮 斯洛文尼亚'
 }
 
-const selectedCountry = ref('united-kingdom')
+// 当前国家列表
+const currentCountries = computed(() => {
+  switch (selectedProvider.value) {
+    case 'receivesmscc':
+      return receivesmsccCountries.value
+    case 'getsmscc':
+      return getsmsccCountries.value
+    case 'sms24me':
+      return sms24meCountries.value
+    case 'smstome':
+      return Object.keys(smstomeCountries.value).map(k => ({
+        code: k,
+        name: smstomeCountryNames[k] || k
+      }))
+    default:
+      return receivesmsccCountries.value
+  }
+})
+
+const selectedCountry = ref('US')
 const searchPhone = ref('')
 
 // 手机号列表
@@ -463,15 +538,14 @@ const hasMore = ref(true)
 // 短信详情
 const currentPhoneDetail = ref(null)
 
-// Cookie 设置
+// Cookie 设置 (SMSToMe)
 const cookieForm = ref({
-  cf_clearance: '',
   smstome_session: '',
   cookie_string: ''
 })
 const currentCookies = ref(null)
 
-// 账号设置
+// 账号设置 (SMSToMe)
 const accountForm = ref({
   email: '',
   password: ''
@@ -479,6 +553,25 @@ const accountForm = ref({
 const loggingIn = ref(false)
 const autoRefreshEnabled = ref(false)
 const hasAccount = ref(false)
+
+// 获取国家显示名称
+function getCountryDisplay(country) {
+  if (typeof country === 'string') {
+    return smstomeCountryNames[country] || country
+  }
+  return `${country.flag || ''} ${country.name}`.trim()
+}
+
+// 获取搜索框占位符
+function getSearchPlaceholder() {
+  const examples = {
+    receivesmscc: '输入手机号搜索 (如: 18594154972)',
+    getsmscc: '输入手机号搜索 (如: 16154342513)',
+    sms24me: '输入手机号搜索 (如: 15077130214)',
+    smstome: '输入手机号搜索 (如: 447447283220)'
+  }
+  return examples[selectedProvider.value] || '输入手机号搜索'
+}
 
 // 显示消息
 function showMessage(text, type = 'success') {
@@ -488,10 +581,38 @@ function showMessage(text, type = 'success') {
   }, 3000)
 }
 
+// 切换数据源
+function switchProvider(providerId) {
+  selectedProvider.value = providerId
+  phones.value = []
+  currentPage.value = 1
+  currentPhoneDetail.value = null
+  activeTab.value = 'list'  // 切换渠道后默认显示手机号列表
+  
+  // 设置默认国家
+  switch (providerId) {
+    case 'receivesmscc':
+    case 'getsmscc':
+      selectedCountry.value = 'US'
+      break
+    case 'sms24me':
+      selectedCountry.value = 'us'
+      break
+    case 'smstome':
+      selectedCountry.value = 'uk'
+      break
+  }
+  
+  checkConnection()
+  loadPhones()
+}
+
 // 检查连接状态
 async function checkConnection() {
   try {
-    const resp = await axios.get(`${API_BASE}/health`)
+    const resp = await axios.get(`${API_BASE}/health`, {
+      params: { provider: selectedProvider.value }
+    })
     isConnected.value = resp.data.connected
   } catch {
     isConnected.value = false
@@ -503,11 +624,33 @@ async function loadPhones() {
   loading.value = true
   
   try {
-    const resp = await axios.get(`${API_BASE}/phones/${selectedCountry.value}`, {
-      params: { page: currentPage.value }
-    })
+    let resp
+    switch (selectedProvider.value) {
+      case 'receivesmscc':
+        resp = await axios.get(`${API_BASE}/receivesmscc/phones`, {
+          params: { 
+            country: selectedCountry.value,
+            page: currentPage.value 
+          }
+        })
+        break
+      case 'getsmscc':
+        resp = await axios.get(`${API_BASE}/getsmscc/phones/${selectedCountry.value}`)
+        break
+      case 'sms24me':
+        resp = await axios.get(`${API_BASE}/sms24me/phones/${selectedCountry.value}`, {
+          params: { page: currentPage.value }
+        })
+        break
+      case 'smstome':
+        resp = await axios.get(`${API_BASE}/smstome/phones/${selectedCountry.value}`, {
+          params: { page: currentPage.value }
+        })
+        break
+    }
+    
     phones.value = resp.data.phones
-    hasMore.value = resp.data.has_more
+    hasMore.value = resp.data.has_more !== false && resp.data.phones.length >= 15
   } catch (e) {
     showMessage(e.response?.data?.error || e.message, 'error')
   } finally {
@@ -531,24 +674,36 @@ function nextPage() {
   }
 }
 
-// 获取当前选中的国家代码
-function getCountryCode() {
-  return Object.keys(countries.value).find(
-    k => countries.value[k] === selectedCountry.value
-  ) || 'uk'
-}
-
 // 查看手机号短信
 async function viewPhoneSMS(phone) {
   loadingSMS.value = true
   activeTab.value = 'sms'
   
-  const phoneNum = phone.phone.replace('+', '')
+  const phoneNum = phone.phone.replace('+', '').replace(/\s/g, '')
+  const country = phone.country_code || selectedCountry.value
   
   try {
-    const resp = await axios.get(`${API_BASE}/phone/${phoneNum}/sms`, {
-      params: { country: getCountryCode() }
-    })
+    let resp
+    switch (selectedProvider.value) {
+      case 'receivesmscc':
+        resp = await axios.get(`${API_BASE}/receivesmscc/sms/${phoneNum}`, {
+          params: { country }
+        })
+        break
+      case 'getsmscc':
+        resp = await axios.get(`${API_BASE}/getsmscc/sms/${phoneNum}`)
+        break
+      case 'sms24me':
+        resp = await axios.get(`${API_BASE}/sms24me/sms/${phoneNum}`, {
+          params: { country }
+        })
+        break
+      case 'smstome':
+        resp = await axios.get(`${API_BASE}/smstome/phone/${phoneNum}/sms`, {
+          params: { country }
+        })
+        break
+    }
     currentPhoneDetail.value = resp.data
   } catch (e) {
     showMessage(e.response?.data?.error || e.message, 'error')
@@ -567,14 +722,32 @@ async function searchPhoneSMS() {
   loadingSMS.value = true
   activeTab.value = 'sms'
   
-  const phoneNum = searchPhone.value.replace('+', '').trim()
+  const phoneNum = searchPhone.value.replace('+', '').replace(/\s/g, '').trim()
   
   try {
-    const resp = await axios.get(`${API_BASE}/phone/${phoneNum}/sms`, {
-      params: { country: getCountryCode() }
-    })
+    let resp
+    switch (selectedProvider.value) {
+      case 'receivesmscc':
+        resp = await axios.get(`${API_BASE}/receivesmscc/sms/${phoneNum}`, {
+          params: { country: selectedCountry.value }
+        })
+        break
+      case 'getsmscc':
+        resp = await axios.get(`${API_BASE}/getsmscc/sms/${phoneNum}`)
+        break
+      case 'sms24me':
+        resp = await axios.get(`${API_BASE}/sms24me/sms/${phoneNum}`, {
+          params: { country: selectedCountry.value }
+        })
+        break
+      case 'smstome':
+        resp = await axios.get(`${API_BASE}/smstome/phone/${phoneNum}/sms`, {
+          params: { country: selectedCountry.value }
+        })
+        break
+    }
     currentPhoneDetail.value = resp.data
-    showMessage(`找到 ${resp.data.sms_count} 条短信`)
+    showMessage(`找到 ${resp.data.sms_count || resp.data.messages?.length || 0} 条短信`)
   } catch (e) {
     if (e.response?.status === 404) {
       showMessage(`未找到手机号 ${phoneNum}`, 'error')
@@ -586,57 +759,16 @@ async function searchPhoneSMS() {
   }
 }
 
-// 加载当前 Cookies
+// 加载当前 Cookies (SMSToMe)
 async function loadCookies() {
   try {
-    const resp = await axios.get(`${API_BASE}/cookies`)
+    const resp = await axios.get(`${API_BASE}/smstome/cookies`)
     currentCookies.value = resp.data.cookies
-  } catch (e) {
+  } catch {
     currentCookies.value = null
   }
   
-  // 同时加载账号
   await loadAccount()
-}
-
-// 保存 Cookies
-async function saveCookies() {
-  saving.value = true
-  
-  try {
-    let data = {}
-    
-    if (cookieForm.value.cookie_string.trim()) {
-      data = { cookie_string: cookieForm.value.cookie_string.trim() }
-    } else {
-      if (cookieForm.value.cf_clearance.trim()) {
-        data.cf_clearance = cookieForm.value.cf_clearance.trim()
-      }
-      if (cookieForm.value.smstome_session.trim()) {
-        data.smstome_session = cookieForm.value.smstome_session.trim()
-      }
-    }
-    
-    if (Object.keys(data).length === 0) {
-      showMessage('请填写 Cookie 信息', 'error')
-      return
-    }
-    
-    const resp = await axios.post(`${API_BASE}/cookies`, data)
-    
-    if (resp.data.success) {
-      showMessage('Cookies 保存成功！' + (resp.data.connected ? ' 连接正常' : ' 但连接失败'))
-      isConnected.value = resp.data.connected
-      await loadCookies()
-      
-      // 清空表单
-      cookieForm.value = { cf_clearance: '', smstome_session: '', cookie_string: '' }
-    }
-  } catch (e) {
-    showMessage(e.response?.data?.error || e.message, 'error')
-  } finally {
-    saving.value = false
-  }
 }
 
 // 测试 Cookies
@@ -644,7 +776,7 @@ async function testCookies() {
   loading.value = true
   
   try {
-    const resp = await axios.get(`${API_BASE}/cookies/test`)
+    const resp = await axios.get(`${API_BASE}/smstome/cookies/test`)
     isConnected.value = resp.data.connected
     showMessage(resp.data.message, resp.data.connected ? 'success' : 'error')
   } catch (e) {
@@ -658,7 +790,7 @@ async function testCookies() {
 // 加载保存的账号
 async function loadAccount() {
   try {
-    const resp = await axios.get(`${API_BASE}/account`)
+    const resp = await axios.get(`${API_BASE}/smstome/account`)
     if (resp.data.email) {
       accountForm.value.email = resp.data.email
       accountForm.value.password = resp.data.password || ''
@@ -680,7 +812,7 @@ async function saveAccount() {
   saving.value = true
   
   try {
-    await axios.post(`${API_BASE}/account`, {
+    await axios.post(`${API_BASE}/smstome/account`, {
       email: accountForm.value.email.trim(),
       password: accountForm.value.password
     })
@@ -702,7 +834,7 @@ async function loginAndRefresh() {
   loggingIn.value = true
   
   try {
-    const resp = await axios.post(`${API_BASE}/login`, {
+    const resp = await axios.post(`${API_BASE}/smstome/login`, {
       email: accountForm.value.email.trim(),
       password: accountForm.value.password
     })
@@ -711,8 +843,6 @@ async function loginAndRefresh() {
       showMessage(resp.data.message)
       isConnected.value = resp.data.connected
       await loadCookies()
-      
-      // 同时保存账号
       await saveAccount()
     }
   } catch (e) {
@@ -796,6 +926,65 @@ body {
   overflow: hidden;
 }
 
+/* 数据源选择 */
+.provider-section {
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  border-bottom: 1px solid #dee2e6;
+}
+
+.provider-tabs {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.provider-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border: 2px solid #dee2e6;
+  border-radius: 12px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+}
+
+.provider-tab:hover {
+  border-color: #667eea;
+  transform: translateY(-2px);
+}
+
+.provider-tab.active {
+  border-color: #667eea;
+  background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+}
+
+.provider-icon {
+  font-size: 20px;
+}
+
+.provider-name {
+  font-weight: 600;
+  color: #333;
+}
+
+.provider-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #6c757d;
+  color: white;
+}
+
+.provider-badge.free {
+  background: #28a745;
+}
+
 .search-section {
   padding: 20px;
   background: #f8f9fa;
@@ -816,6 +1005,7 @@ body {
   font-size: 14px;
   background: white;
   cursor: pointer;
+  min-width: 150px;
 }
 
 .search-input {
@@ -857,8 +1047,8 @@ body {
   font-size: 12px;
 }
 
-.btn-danger {
-  background: #dc3545;
+.btn-secondary {
+  background: #6c757d;
   color: white;
 }
 
@@ -985,6 +1175,9 @@ body {
 .phone-info {
   font-size: 13px;
   color: #6c757d;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .sms-list {
@@ -1063,33 +1256,36 @@ body {
   }
 }
 
-.btn-secondary {
-  background: #6c757d;
-  color: white;
+.form-group {
+  margin-bottom: 16px;
 }
 
-.btn-secondary:hover:not(:disabled) {
-  background: #5a6268;
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+  color: #333;
+  font-size: 14px;
 }
 
-.divider {
+.form-input {
+  width: 100%;
+  padding: 12px;
+  border: 2px solid #e9ecef;
+  border-radius: 8px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #667eea;
+}
+
+.form-actions {
+  margin-top: 20px;
   display: flex;
-  align-items: center;
-  margin: 32px 0;
-  color: #adb5bd;
-  font-size: 13px;
-}
-
-.divider::before,
-.divider::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: #e9ecef;
-}
-
-.divider span {
-  padding: 0 16px;
+  gap: 10px;
 }
 
 .auto-refresh-status {
@@ -1115,82 +1311,6 @@ body {
 .status-hint {
   color: #6c757d;
   font-size: 12px;
-}
-
-.settings-info {
-  background: #e7f3ff;
-  border: 1px solid #b6d4fe;
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 24px;
-}
-
-.settings-info p {
-  margin-bottom: 12px;
-  color: #0c5460;
-}
-
-.settings-info ol {
-  margin-left: 20px;
-  color: #0c5460;
-}
-
-.settings-info li {
-  margin-bottom: 6px;
-}
-
-.settings-info a {
-  color: #667eea;
-}
-
-.settings-info code {
-  background: #fff;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-family: monospace;
-}
-
-.cookie-form {
-  background: #f8f9fa;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 24px;
-}
-
-.form-group {
-  margin-bottom: 16px;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 6px;
-  font-weight: 600;
-  color: #333;
-  font-size: 14px;
-}
-
-.form-input {
-  width: 100%;
-  padding: 12px;
-  border: 2px solid #e9ecef;
-  border-radius: 8px;
-  font-size: 14px;
-  font-family: monospace;
-  transition: border-color 0.2s;
-}
-
-.form-input:focus {
-  outline: none;
-  border-color: #667eea;
-}
-
-.form-textarea {
-  resize: vertical;
-  min-height: 80px;
-}
-
-.form-actions {
-  margin-top: 20px;
 }
 
 .current-cookies {
@@ -1284,6 +1404,10 @@ body {
     position: static;
     margin-top: 10px;
   }
+  
+  .provider-tabs {
+    flex-direction: column;
+  }
 }
 
 /* API 文档样式 */
@@ -1339,11 +1463,6 @@ body {
 
 .api-method.post {
   background: #007bff;
-  color: white;
-}
-
-.api-method.delete {
-  background: #dc3545;
   color: white;
 }
 

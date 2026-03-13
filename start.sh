@@ -54,34 +54,47 @@ trap cleanup SIGINT SIGTERM
 # 启动后端
 echo ""
 echo "🚀 启动后端 API (端口 5001)..."
-python3 api_server.py > /dev/null 2>&1 &
+python3 api_server.py > /tmp/sms_api.log 2>&1 &
 BACKEND_PID=$!
-sleep 2
 
-# 检查后端端口
-if lsof -ti:5001 > /dev/null 2>&1; then
-    echo "   ✅ 后端已启动"
-else
-    echo "   ❌ 后端启动失败"
-    exit 1
-fi
+# 等待后端启动 (最多等待 15 秒)
+echo "   等待后端启动..."
+for i in {1..15}; do
+    if lsof -ti:5001 > /dev/null 2>&1; then
+        echo "   ✅ 后端已启动"
+        break
+    fi
+    sleep 1
+    if [ $i -eq 15 ]; then
+        echo "   ❌ 后端启动超时"
+        echo "   查看日志: cat /tmp/sms_api.log"
+        exit 1
+    fi
+done
 
 # 启动前端
 echo ""
 echo "🚀 启动前端 (端口 5173)..."
 cd frontend
-npm run dev > /dev/null 2>&1 &
+npm run dev > /tmp/sms_frontend.log 2>&1 &
+FRONTEND_PID=$!
 cd ..
-sleep 3
 
-# 检查前端端口
-if lsof -ti:5173 > /dev/null 2>&1; then
-    echo "   ✅ 前端已启动"
-else
-    echo "   ❌ 前端启动失败"
-    lsof -ti:5001 | xargs kill 2>/dev/null
-    exit 1
-fi
+# 等待前端启动 (最多等待 20 秒)
+echo "   等待前端启动..."
+for i in {1..20}; do
+    if lsof -ti:5173 > /dev/null 2>&1; then
+        echo "   ✅ 前端已启动"
+        break
+    fi
+    sleep 1
+    if [ $i -eq 20 ]; then
+        echo "   ❌ 前端启动超时"
+        echo "   查看日志: cat /tmp/sms_frontend.log"
+        lsof -ti:5001 | xargs kill 2>/dev/null
+        exit 1
+    fi
+done
 
 echo ""
 echo "========================================"
